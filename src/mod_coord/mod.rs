@@ -7,11 +7,9 @@
 //! The math is textbook; the value is in matching upstream's exact float output
 //! against `tests/test_modifier_coord_*.cpp`.
 
-// Distortion models (v0.2): port from mod-coord.cpp lines 560-758.
-//   - poly3:   ModifyCoord_UnDist_Poly3, lines 560-613.
-//   - poly5:   ModifyCoord_UnDist_Poly5, lines 634-693.
-//   - ptlens:  ModifyCoord_UnDist_Ptlens, lines 694-758.
-//
-// Geometry conversions (v0.2):
-//   - rectilinear ↔ fisheye (equidistant, orthographic, equisolid, stereographic).
-//   - equirectangular, panoramic.
+pub mod distortion;
+pub mod geometry;
+
+pub use distortion::{
+    dist_poly3, dist_poly5, dist_ptlens, undist_poly3, undist_poly5, undist_ptlens,
+};
