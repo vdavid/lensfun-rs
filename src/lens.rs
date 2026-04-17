@@ -63,6 +63,15 @@ pub struct Lens {
     pub aperture_max: f32,
     /// Crop factor of the camera body the lens was calibrated against.
     pub crop_factor: f32,
+    /// Aspect ratio of the calibration images. Defaults to 1.5 (3:2). Mirrors the
+    /// `lfLens::AspectRatio` legacy field upstream.
+    pub aspect_ratio: f32,
+    /// Horizontal shift of the lens distortion center, relative to the image center,
+    /// expressed as a fraction of the longer image dimension (range -0.5 .. +0.5).
+    /// Mirrors `lfLens::CenterX`.
+    pub center_x: f32,
+    /// Vertical shift of the lens distortion center. Mirrors `lfLens::CenterY`.
+    pub center_y: f32,
     /// Distortion calibration samples.
     pub calib_distortion: Vec<CalibDistortion>,
     /// TCA calibration samples.

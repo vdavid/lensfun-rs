@@ -22,6 +22,9 @@ pub struct Camera {
     pub mount: String,
     /// Crop factor relative to a 35 mm full-frame sensor.
     pub crop_factor: f32,
+    /// Aspect ratio of the sensor (width / height). Optional in the XML database;
+    /// `None` when not specified. Mirrors the `<aspect-ratio>` element on `<camera>`.
+    pub aspect_ratio: Option<f32>,
     /// Score returned by `Database::find_camera` matching; populated by query results.
     pub score: i32,
 }
