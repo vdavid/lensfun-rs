@@ -50,6 +50,7 @@ pub mod mod_subpix;
 pub mod modifier;
 pub mod mount;
 
+pub use auxfun::{FuzzyStrCmp, fuzzy_str_cmp};
 pub use calib::{
     CalibDistortion, CalibTca, CalibVignetting, DistortionModel, TcaModel, VignettingModel,
 };
