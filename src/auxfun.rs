@@ -4,9 +4,39 @@
 
 use std::cmp::Ordering;
 
-// interpolate (v0.2): port from auxfun.cpp:335.
-//   Catmull-Rom spline across focal-length axis (and aperture axis for vignetting).
-//   ~25 LoC.
+/// Sentinel for [`catmull_rom_interpolate`] meaning "no neighbor on this side". Pass this
+/// for `y1` to signal no left neighbor (uses the `y3 - y2` tangent at the start), or for
+/// `y4` to signal no right neighbor (uses `y3 - y2` at the end).
+///
+/// Mirrors upstream's `FLT_MAX` sentinel in `_lf_interpolate` (auxfun.cpp:341, 346).
+pub const NO_NEIGHBOR: f32 = f32::MAX;
+
+/// Cubic Hermite (Catmull-Rom) interpolation between `y2` and `y3` at parameter `t ∈ [0, 1]`,
+/// using `y1` and `y4` as outer control points to derive the tangents.
+///
+/// Pass [`NO_NEIGHBOR`] for `y1` or `y4` when one side has no neighbor (endpoint case);
+/// the missing-side tangent then degrades to `y3 - y2`.
+// Hermite polynomial endpoints; matches `_lf_interpolate` in auxfun.cpp:335.
+pub fn catmull_rom_interpolate(y1: f32, y2: f32, y3: f32, y4: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+
+    let tg2 = if y1 == NO_NEIGHBOR {
+        y3 - y2
+    } else {
+        (y3 - y1) * 0.5
+    };
+    let tg3 = if y4 == NO_NEIGHBOR {
+        y3 - y2
+    } else {
+        (y4 - y2) * 0.5
+    };
+
+    (2.0 * t3 - 3.0 * t2 + 1.0) * y2
+        + (t3 - 2.0 * t2 + t) * tg2
+        + (-2.0 * t3 + 3.0 * t2) * y3
+        + (t3 - t2) * tg3
+}
 
 /// Fuzzy string comparator for lens and camera model names.
 ///
