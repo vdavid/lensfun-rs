@@ -4,6 +4,9 @@
 //! `include/lensfun/lensfun.h.in`.
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use crate::auxfun::{NO_NEIGHBOR, catmull_rom_interpolate};
 use crate::calib::{
@@ -503,5 +506,153 @@ impl Lens {
             distance,
             model: vignetting_from_terms(model_kind, out),
         })
+    }
+}
+
+// -----------------------------// GuessParameters //-----------------------------//
+//
+// Port of `lfLens::GuessParameters` (lens.cpp:171). Three regexes against the
+// model-name string, plus a fallback that scans calibration entries for focal /
+// aperture range. The Rust version handles only the regex pass; the calibration
+// fallback works against the flat `calib_*` Vecs.
+//
+// Upstream uses POSIX-style `regex_match` which requires the whole string to
+// match. We anchor with `^…$` to get the same semantics.
+
+// Regex 0: `<minf>-<maxf>mm <ap-prefix>?<mina>(-<maxa>)?`
+//   group 1 = minf, group 2 = maxf, group 5 = mina.
+// Port of lens.cpp:154.
+static LENS_NAME_RE_0: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[^:]*?([0-9]+[0-9.]*)[-]?([0-9]+[0-9.]*)?(mm)[[:space:]]+(f/|f|1/|1:)?([0-9.]+)(-[0-9.]+)?.*$")
+        .expect("regex 0 compiles")
+});
+
+// Regex 1: `1:<mina>-<maxa> <minf>-<maxf>mm?`
+//   group 3 = minf, group 4 = maxf, group 1 = mina.
+// Port of lens.cpp:157.
+static LENS_NAME_RE_1: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^.*?1:([0-9.]+)[-]?([0-9.]+)?[[:space:]]+([0-9.]+)[-]?([0-9.]+)?(mm)?.*$")
+        .expect("regex 1 compiles")
+});
+
+// Regex 2: `<mina>-<maxa>/<minf>-<maxf>`
+//   group 3 = minf, group 4 = maxf, group 1 = mina.
+// Port of lens.cpp:160.
+static LENS_NAME_RE_2: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^.*?([0-9.]+)[-]?([0-9.]+)?\s*/\s*([0-9.]+)[-]?([0-9.]+)?.*$")
+        .expect("regex 2 compiles")
+});
+
+// `<digit>(.<digit+>)?x` — any model that looks like a teleconverter is skipped.
+// Port of lens.cpp:169 (verbatim, including the upstream `[0.9]` typo — port,
+// don't fix).
+static EXTENDER_MAGNIFICATION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^.*?[0-9](\.[0.9]+)?x.*$").expect("extender regex compiles"));
+
+/// Per-regex `(minf, maxf, mina)` capture-group indices.
+// Port of lens.cpp:163's `lens_name_matches` table.
+const LENS_NAME_MATCHES: [[usize; 3]; 3] = [[1, 2, 5], [3, 4, 1], [3, 4, 1]];
+
+impl Lens {
+    /// Fill in `focal_min`, `focal_max`, `aperture_min`, `aperture_max` from the
+    /// model name (and, as a fallback, from the calibration sample focal / aperture
+    /// values).
+    ///
+    /// Idempotent for already-set fields: only zero entries are overwritten.
+    // Port of lfLens::GuessParameters at lens.cpp:171.
+    pub fn guess_parameters(&mut self) {
+        let mut minf = f32::MAX;
+        let mut maxf = f32::MIN;
+        let mut mina = f32::MAX;
+        let maxa = f32::MIN; // upstream tracks but never assigns from regex
+
+        let model = &self.model;
+        let model_lower = model.to_ascii_lowercase();
+
+        let skip_extender = model_lower.contains("adapter")
+            || model_lower.contains("reducer")
+            || model_lower.contains("booster")
+            || model_lower.contains("extender")
+            || model_lower.contains("converter")
+            || model_lower.contains("magnifier")
+            || EXTENDER_MAGNIFICATION_RE.is_match(model);
+
+        if !model.is_empty()
+            && (self.aperture_min == 0.0 || self.focal_min == 0.0)
+            && !skip_extender
+        {
+            let regexes: [&Regex; 3] = [&LENS_NAME_RE_0, &LENS_NAME_RE_1, &LENS_NAME_RE_2];
+            for (i, re) in regexes.iter().enumerate() {
+                if let Some(caps) = re.captures(model) {
+                    let idx = LENS_NAME_MATCHES[i];
+
+                    if let Some(m) = caps.get(idx[0]) {
+                        if let Ok(v) = m.as_str().parse::<f32>() {
+                            minf = v;
+                        }
+                    }
+                    if let Some(m) = caps.get(idx[1]) {
+                        if let Ok(v) = m.as_str().parse::<f32>() {
+                            maxf = v;
+                        }
+                    }
+                    if let Some(m) = caps.get(idx[2]) {
+                        if let Ok(v) = m.as_str().parse::<f32>() {
+                            mina = v;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Fallback: scan calibration samples for focal / aperture range.
+        if self.aperture_min == 0.0 || self.focal_min == 0.0 {
+            for c in &self.calib_distortion {
+                if c.focal < minf {
+                    minf = c.focal;
+                }
+                if c.focal > maxf {
+                    maxf = c.focal;
+                }
+            }
+            for c in &self.calib_tca {
+                if c.focal < minf {
+                    minf = c.focal;
+                }
+                if c.focal > maxf {
+                    maxf = c.focal;
+                }
+            }
+            for c in &self.calib_vignetting {
+                if c.focal < minf {
+                    minf = c.focal;
+                }
+                if c.focal > maxf {
+                    maxf = c.focal;
+                }
+                if c.aperture < mina {
+                    mina = c.aperture;
+                }
+                // Upstream tracks maxa here too, but never writes it.
+            }
+        }
+
+        if minf != f32::MAX && self.focal_min == 0.0 {
+            self.focal_min = minf;
+        }
+        if maxf != f32::MIN && self.focal_max == 0.0 {
+            self.focal_max = maxf;
+        }
+        if mina != f32::MAX && self.aperture_min == 0.0 {
+            self.aperture_min = mina;
+        }
+        if maxa != f32::MIN && self.aperture_max == 0.0 {
+            self.aperture_max = maxa;
+        }
+
+        if self.focal_max == 0.0 {
+            self.focal_max = self.focal_min;
+        }
     }
 }

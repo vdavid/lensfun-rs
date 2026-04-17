@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use roxmltree::{Document, Node, ParsingOptions};
 
+use crate::auxfun::FuzzyStrCmp;
 use crate::calib::{
     CalibDistortion, CalibTca, CalibVignetting, DistortionModel, TcaModel, VignettingModel,
 };
@@ -187,29 +188,215 @@ impl Database {
         Ok(())
     }
 
-    /// Find the cameras whose maker + model match the given strings exactly.
+    /// Find cameras matching `maker` and `model` using fuzzy string scoring.
     ///
-    /// **Stub.** A faithful port (`lfDatabase::FindCameras` and `FindCamerasExt`) needs the
-    /// fuzzy string matcher; that's tracked separately. For now this returns matches whose
-    /// maker (case-insensitive) and model (case-sensitive) are exactly equal.
+    /// Sorted by score descending. Empty maker / model treated as wildcard.
+    // Port of lfDatabase::FindCamerasExt at database.cpp:1194.
     pub fn find_cameras(&self, maker: Option<&str>, model: &str) -> Vec<&Camera> {
-        self.cameras
-            .iter()
-            .filter(|c| match maker {
-                Some(m) => c.maker.eq_ignore_ascii_case(m),
-                None => true,
-            })
-            .filter(|c| c.model == model)
-            .collect()
+        let maker = maker.filter(|s| !s.is_empty());
+        let model = if model.is_empty() { None } else { Some(model) };
+
+        let fc_maker = maker.map(|m| FuzzyStrCmp::new(m, true));
+        let fc_model = model.map(|m| FuzzyStrCmp::new(m, true));
+
+        let mut scored: Vec<(i32, &Camera)> = Vec::new();
+        for cam in &self.cameras {
+            let mut score1 = 0;
+            let mut score2 = 0;
+            if let Some(fc) = &fc_maker {
+                score1 = fc.compare(&cam.maker);
+                if score1 == 0 {
+                    continue;
+                }
+            }
+            if let Some(fc) = &fc_model {
+                score2 = fc.compare(&cam.model);
+                if score2 == 0 {
+                    continue;
+                }
+            }
+            scored.push((score1 + score2, cam));
+        }
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.into_iter().map(|(_, c)| c).collect()
     }
 
-    /// Find the lenses whose model matches the given string exactly.
+    /// Find lenses matching `model` (and an optional `camera` for mount + crop bucketing).
     ///
-    /// **Stub.** A faithful port (`lfDatabase::FindLenses`) needs the fuzzy string matcher
-    /// plus the `MatchScore` heuristics; that's tracked separately.
-    pub fn find_lenses(&self, _camera: Option<&Camera>, model: &str) -> Vec<&Lens> {
-        self.lenses.iter().filter(|l| l.model == model).collect()
+    /// Sorted by score descending. Mirrors upstream `lfDatabase::FindLenses` with
+    /// `sflags = 0` (strict matcher, no sort-and-uniquify pass).
+    // Port of lfDatabase::FindLenses at database.cpp:1414.
+    pub fn find_lenses(&self, camera: Option<&Camera>, model: &str) -> Vec<&Lens> {
+        let model_opt = if model.is_empty() { None } else { Some(model) };
+
+        // Build a synthetic pattern lens, then run GuessParameters to extract focal /
+        // aperture ranges from the model name (matches upstream's prep at database.cpp:1422).
+        let mut pattern = Lens::default();
+        if let Some(m) = model_opt {
+            pattern.model = m.to_string();
+        }
+        pattern.guess_parameters();
+
+        let fc = FuzzyStrCmp::new(pattern.model.as_str(), true);
+
+        // Resolve compatible mounts via the camera's mount.
+        let compat_mounts: Vec<&str> = match camera {
+            Some(cam) => self
+                .mounts
+                .iter()
+                .find(|m| m.name == cam.mount)
+                .map(|m| m.compat.iter().map(String::as_str).collect())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+
+        let mut scored: Vec<(i32, &Lens)> = Vec::new();
+        for lens in &self.lenses {
+            let s = match_score(&pattern, lens, camera, &fc, &compat_mounts);
+            if s > 0 {
+                scored.push((s, lens));
+            }
+        }
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.into_iter().map(|(_, l)| l).collect()
     }
+}
+
+// -----------------------------// MatchScore //-----------------------------//
+
+// Port of `_lf_compare_num` at database.cpp:1241.
+fn compare_num(a: f32, b: f32) -> i32 {
+    if a == 0.0 || b == 0.0 {
+        return 0; // neutral
+    }
+    let r = a / b;
+    if r <= 0.99 || r >= 1.01 {
+        return -1; // strong no
+    }
+    1 // strong yes
+}
+
+/// Score how well `match_lens` satisfies `pattern` (and `camera`).
+///
+/// Returns 0 if the entry is incompatible (mount mismatch, wrong crop bucket,
+/// numeric range out of tolerance). Otherwise, a positive integer; higher is better.
+// Port of lfDatabase::MatchScore at database.cpp:1252.
+fn match_score(
+    pattern: &Lens,
+    match_lens: &Lens,
+    camera: Option<&Camera>,
+    fuzzycmp: &FuzzyStrCmp,
+    compat_mounts: &[&str],
+) -> i32 {
+    let mut score: i32 = 0;
+
+    // Crop-factor bucketing. Upstream iterates `Calibrations`; we have a single
+    // `crop_factor` per lens, so the loop degenerates to one iteration.
+    if let Some(cam) = camera {
+        if match_lens.crop_factor > 0.0 {
+            let mc = match_lens.crop_factor;
+            let mut crop_score = 0;
+            // Skip if camera crop is significantly *smaller* than the lens calibration crop.
+            if !(cam.crop_factor > 0.01 && cam.crop_factor < mc * 0.96) {
+                if cam.crop_factor >= mc * 1.41 {
+                    crop_score = crop_score.max(2);
+                } else if cam.crop_factor >= mc * 1.31 {
+                    crop_score = crop_score.max(4);
+                } else if cam.crop_factor >= mc * 1.21 {
+                    crop_score = crop_score.max(6);
+                } else if cam.crop_factor >= mc * 1.11 {
+                    crop_score = crop_score.max(8);
+                } else if cam.crop_factor >= mc * 1.01 {
+                    crop_score = crop_score.max(10);
+                } else if cam.crop_factor >= mc {
+                    crop_score = crop_score.max(5);
+                } else if cam.crop_factor >= mc * 0.96 {
+                    crop_score = crop_score.max(3);
+                }
+            }
+            if crop_score == 0 {
+                return 0;
+            }
+            score += crop_score;
+        }
+    }
+
+    match compare_num(pattern.focal_min, match_lens.focal_min) {
+        -1 => return 0,
+        1 => score += 10,
+        _ => {}
+    }
+    match compare_num(pattern.focal_max, match_lens.focal_max) {
+        -1 => return 0,
+        1 => score += 10,
+        _ => {}
+    }
+    match compare_num(pattern.aperture_min, match_lens.aperture_min) {
+        -1 => return 0,
+        1 => score += 10,
+        _ => {}
+    }
+    match compare_num(pattern.aperture_max, match_lens.aperture_max) {
+        -1 => return 0,
+        1 => score += 10,
+        _ => {}
+    }
+
+    // Mount compatibility.
+    if !match_lens.mounts.is_empty() && (camera.is_some() || !compat_mounts.is_empty()) {
+        let mut matching_mount_found = false;
+
+        if let Some(cam) = camera {
+            if !cam.mount.is_empty() {
+                for m in &match_lens.mounts {
+                    if m.eq_ignore_ascii_case(&cam.mount) {
+                        matching_mount_found = true;
+                        score += 10;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !matching_mount_found && !compat_mounts.is_empty() {
+            'compat: for cm in compat_mounts {
+                for m in &match_lens.mounts {
+                    if m.eq_ignore_ascii_case(cm) {
+                        matching_mount_found = true;
+                        score += 9;
+                        break 'compat;
+                    }
+                }
+            }
+        }
+
+        if !matching_mount_found {
+            return 0;
+        }
+    }
+
+    // Maker comparison (case-insensitive).
+    if !pattern.maker.is_empty() && !match_lens.maker.is_empty() {
+        if !pattern.maker.eq_ignore_ascii_case(&match_lens.maker) {
+            return 0;
+        }
+        score += 10;
+    }
+
+    // Fuzzy model comparison — the most complex part.
+    if !pattern.model.is_empty() && !match_lens.model.is_empty() {
+        let mut fz = fuzzycmp.compare(&match_lens.model);
+        if fz == 0 {
+            return 0;
+        }
+        fz = (fz * 4) / 10;
+        if fz == 0 {
+            fz = 1;
+        }
+        score += fz;
+    }
+
+    score
 }
 
 // -----------------------------// element parsers //-----------------------------//

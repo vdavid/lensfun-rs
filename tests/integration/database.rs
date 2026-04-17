@@ -352,7 +352,6 @@ fn parses_lens_center_and_aspect_ratio() {
 // `FindLenses`, drop the `#[ignore]`.
 
 #[test]
-#[ignore = "blocked on v0.4 fuzzy matcher (lfFuzzyStrCmp + MatchScore)"]
 fn db_cam_search() {
     let db = load_bundled_db();
     let cameras = db.find_cameras(Some("pentax"), "K100D");
@@ -369,7 +368,6 @@ fn db_cam_search() {
 }
 
 #[test]
-#[ignore = "blocked on v0.4 fuzzy matcher (lfFuzzyStrCmp + MatchScore)"]
 fn db_lens_search() {
     let db = load_bundled_db();
 
