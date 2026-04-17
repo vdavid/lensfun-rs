@@ -1,0 +1,65 @@
+# Security Audit Workflow for lensfun-rs
+
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  checks: write
+  contents: read
+  issues: write
+
+jobs:
+  security-audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run security audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  license-check:
+    name: License & Advisory Check (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          log-level: warn
+
+  unused-deps:
+    name: Unused Dependencies (cargo-udeps)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: 'v0-rust-nightly'
+      - name: Install cargo-udeps
+        run: cargo install cargo-udeps --locked
+      - name: Check for unused dependencies
+        run: cargo +nightly udeps --all-targets
+        env:
+          RUSTFLAGS: '-A warnings'

@@ -1,0 +1,14 @@
+# Rust
+target/
+Cargo.lock.bak
+
+# IDEs and OS
+.idea/
+.DS_Store
+*.swp
+
+# Local-only repos cloned for reference (lensfun upstream, etc.)
+related-repos/
+
+# Local handoff scratch
+.claude/

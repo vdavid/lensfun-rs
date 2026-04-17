@@ -1,0 +1,18 @@
+# clippy.toml - Clippy linter configuration for lensfun-rs
+#
+# Run with: cargo clippy
+# Run with all features: cargo clippy --all-features
+#
+# Documentation: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+# Lens correction math involves Newton iterations, sparse spline interpolation,
+# and per-pixel scalar passes. These are inherently a few branches deep.
+# Default is 25; we keep it at 25 to be explicit.
+cognitive-complexity-threshold = 25
+
+# Some math functions take many params (k1, k2, k3, focal, aperture, distance,
+# crop, ...). Raise to keep the API faithful to the upstream C++ signatures.
+too-many-arguments-threshold = 8
+
+# Allow descriptive type names for calibration/modifier types.
+type-complexity-threshold = 250

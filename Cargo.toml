@@ -1,0 +1,49 @@
+[package]
+name = "lensfun"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "LGPL-3.0-or-later"
+description = "Pure-Rust port of LensFun: camera lens correction (distortion, TCA, vignetting) without C dependencies"
+repository = "https://github.com/vdavid/lensfun-rs"
+homepage = "https://github.com/vdavid/lensfun-rs"
+keywords = ["lens", "camera", "distortion", "vignetting", "photography"]
+categories = ["multimedia::images", "graphics"]
+readme = "README.md"
+documentation = "https://docs.rs/lensfun"
+exclude = [
+    ".github/",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/",
+    "justfile",
+    "deny.toml",
+    "clippy.toml",
+    "rustfmt.toml",
+    "proptest-regressions/",
+    "related-repos/",
+    "scripts/",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+# XML database parsing. roxmltree is small, fast, and pure-Rust.
+roxmltree = "0.20"
+
+# Regex for lfLens::GuessParameters (3 fixed patterns).
+regex = "1"
+
+# Error types.
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"
+approx = "0.5"
+
+[features]
+default = []
+# Bundle the upstream XML database into the binary at build time.
+# When disabled, consumers supply a path at runtime via Database::load_dir.
+bundled-db = []

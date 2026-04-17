@@ -1,0 +1,16 @@
+# rustfmt.toml - Rust formatting configuration for lensfun-rs
+#
+# Run with: cargo fmt
+# Check without modifying: cargo fmt --check
+#
+# Documentation: https://rust-lang.github.io/rustfmt/
+#
+# Note: Only stable options are configured here.
+
+edition = "2024"
+max_width = 100
+newline_style = "Unix"
+reorder_imports = true
+reorder_modules = true
+use_field_init_shorthand = true
+use_try_shorthand = true
