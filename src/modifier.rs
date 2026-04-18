@@ -17,6 +17,9 @@ use crate::lens::Lens;
 use crate::mod_coord::{
     dist_poly3, dist_poly5, dist_ptlens, undist_poly3, undist_poly5, undist_ptlens,
 };
+use crate::mod_pc::{
+    self, Direction as PerspectiveDirection, PerspectiveState, build_perspective_state,
+};
 use crate::mod_subpix::{tca_linear, tca_poly3_forward, tca_poly3_reverse};
 
 /// Distortion pass state — interpolated coefficients post-rescaling, plus
@@ -68,6 +71,7 @@ pub struct Modifier {
     distortion: Option<DistortionPass>,
     tca: Option<TcaPass>,
     vignetting: Option<VignettingPass>,
+    perspective: Option<PerspectiveState>,
 }
 
 impl Modifier {
@@ -130,6 +134,7 @@ impl Modifier {
             distortion: None,
             tca: None,
             vignetting: None,
+            perspective: None,
         }
     }
 
@@ -209,6 +214,36 @@ impl Modifier {
         true
     }
 
+    /// Enable perspective correction from a list of pixel-coordinate control
+    /// points and a finetune `d ∈ [-1, 1]` (clamped). Returns `true` if a
+    /// callback was installed, mirroring upstream's
+    /// `EnablePerspectiveCorrection (...) & LF_MODIFY_PERSPECTIVE`.
+    ///
+    /// `count` of `x`/`y` must be in `4..=8`. See upstream
+    /// `lensfun.h.in :: EnablePerspectiveCorrection` for the meaning of each
+    /// supported control-point count.
+    // Port of mod-pc.cpp:572-710.
+    pub fn enable_perspective_correction(&mut self, x: &[f32], y: &[f32], d: f32) -> bool {
+        let count = x.len();
+        if count != y.len() || !(4..=8).contains(&count) {
+            return false;
+        }
+        // Convert pixel coords → normalized (matches upstream lines 583-587).
+        let mut xn = Vec::with_capacity(count);
+        let mut yn = Vec::with_capacity(count);
+        for i in 0..count {
+            xn.push(x[i] as f64 * self.norm_scale - self.center_x);
+            yn.push(y[i] as f64 * self.norm_scale - self.center_y);
+        }
+        match build_perspective_state(&xn, &yn, d, self.reverse) {
+            Some(state) => {
+                self.perspective = Some(state);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Apply geometry + distortion to coordinates. Mirrors upstream
     /// `lfModifier::ApplyGeometryDistortion`.
     ///
@@ -224,9 +259,10 @@ impl Modifier {
         rows: usize,
         coords: &mut [f32],
     ) -> bool {
-        let Some(pass) = self.distortion else {
+        // Must have at least one coord callback enabled.
+        if self.distortion.is_none() && self.perspective.is_none() {
             return false;
-        };
+        }
         if rows == 0 || width == 0 {
             return false;
         }
@@ -248,8 +284,31 @@ impl Modifier {
                 coords[row_off + 2 * i + 1] = y;
             }
 
-            // Apply distortion in place.
-            apply_distortion_kernel(&pass, &mut coords[row_off..row_off + 2 * width]);
+            // Run callbacks in upstream priority order:
+            //   distortion forward  → 250 (reverse=false → Undist)
+            //   perspective fwd     → 300 (Correction)
+            //   perspective rev     → 700 (Distortion)
+            //   distortion rev      → 750 (Dist)
+            // i.e. when reverse=false: distortion first, then perspective.
+            // When reverse=true: perspective first, then distortion.
+            let row_slice = &mut coords[row_off..row_off + 2 * width];
+            if !self.reverse {
+                if let Some(pass) = self.distortion {
+                    apply_distortion_kernel(&pass, row_slice);
+                }
+                if let Some(p) = self.perspective {
+                    debug_assert_eq!(p.direction, PerspectiveDirection::Correction);
+                    mod_pc::apply_correction_kernel(&p, row_slice);
+                }
+            } else {
+                if let Some(p) = self.perspective {
+                    debug_assert_eq!(p.direction, PerspectiveDirection::Distortion);
+                    mod_pc::apply_distortion_kernel(&p, row_slice);
+                }
+                if let Some(pass) = self.distortion {
+                    apply_distortion_kernel(&pass, row_slice);
+                }
+            }
 
             // Convert back to pixel coords.
             for i in 0..width {

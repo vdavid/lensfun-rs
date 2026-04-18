@@ -31,6 +31,7 @@
 //! | [`mount`] | `libs/lensfun/mount.cpp` |
 //! | [`modifier`] | `libs/lensfun/modifier.cpp` |
 //! | [`mod_coord`] | `libs/lensfun/mod-coord.cpp` |
+//! | [`mod_pc`] | `libs/lensfun/mod-pc.cpp` |
 //! | [`mod_color`] | `libs/lensfun/mod-color.cpp` |
 //! | [`mod_subpix`] | `libs/lensfun/mod-subpix.cpp` |
 //! | [`auxfun`] | `libs/lensfun/auxfun.cpp` |
@@ -47,6 +48,7 @@ pub mod error;
 pub mod lens;
 pub mod mod_color;
 pub mod mod_coord;
+pub mod mod_pc;
 pub mod mod_subpix;
 pub mod modifier;
 pub mod mount;
