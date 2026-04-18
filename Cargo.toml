@@ -38,12 +38,14 @@ regex = "1"
 # Error types.
 thiserror = "2"
 
+# Decompress the bundled XML database at runtime (compressed at build time).
+flate2 = "1"
+
+[build-dependencies]
+# Compress data/db/*.xml at build time. Runtime only needs the matching
+# `flate2` in [dependencies] for decompression.
+flate2 = "1"
+
 [dev-dependencies]
 proptest = "1"
 approx = "0.5"
-
-[features]
-default = []
-# Bundle the upstream XML database into the binary at build time.
-# When disabled, consumers supply a path at runtime via Database::load_dir.
-bundled-db = []

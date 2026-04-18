@@ -16,9 +16,15 @@
 
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use flate2::read::GzDecoder;
 use roxmltree::{Document, Node, ParsingOptions};
+
+mod bundled {
+    include!(concat!(env!("OUT_DIR"), "/bundled_db.rs"));
+}
 
 use crate::auxfun::FuzzyStrCmp;
 use crate::calib::{
@@ -83,6 +89,27 @@ impl Database {
             db.load_file(&file)?;
         }
 
+        Ok(db)
+    }
+
+    /// Load the XML database that ships with the crate, with no filesystem I/O.
+    ///
+    /// The XML files under `data/db/` are gzipped at build time and embedded as
+    /// `&'static [u8]`. This call decompresses each one and feeds it through the
+    /// same parser as [`Database::load_dir`], in the same sorted order, so the
+    /// result is byte-equivalent to `load_dir("data/db")`.
+    pub fn load_bundled() -> Result<Self> {
+        let mut db = Self::new();
+        for file in bundled::BUNDLED_DB {
+            let mut xml = String::with_capacity(file.uncompressed_size);
+            GzDecoder::new(file.gz)
+                .read_to_string(&mut xml)
+                .map_err(|source| Error::Io {
+                    path: PathBuf::from(format!("<bundled:{}>", file.name)),
+                    source,
+                })?;
+            db.load_str_with_context(&xml, Path::new(file.name))?;
+        }
         Ok(db)
     }
 
