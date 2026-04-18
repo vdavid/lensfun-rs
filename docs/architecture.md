@@ -52,10 +52,10 @@ Upstream tests pin specific float values. We do **not** rearrange algebra "for c
 
 ### Database storage strategy
 
-Two valid approaches; v0.1 uses runtime parsing:
+Two paths, both supported as of v0.5:
 
-- **Runtime parsing (v0.1, default)**: ship `data/db/*.xml` alongside the crate or let consumers supply a path via `Database::load_dir`. Parse on first use, cache in memory.
-- **Build-time bundling (v0.2+, opt-in via `bundled-db` feature)**: a `build.rs` reads the XML and emits compressed `&'static [u8]`. Consumers get zero-I/O lookup.
+- **Runtime parsing**: `Database::load_dir(path)` parses XML from disk. Use this when consumers ship the DB out-of-band or want a custom location.
+- **Build-time bundling (default)**: `Database::load_bundled()` decompresses the gzipped XML embedded by `build.rs` (~574 KB on disk, ~5 MB in RAM after parse). Zero-I/O. No feature flag — `flate2` is always pulled in.
 
 ### Why no traits for `Modifier`
 
