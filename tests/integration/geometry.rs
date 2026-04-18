@@ -276,12 +276,30 @@ fn round_trip_orthographic_erect() {
 // ----------------------- ignored upstream high-level smoke -----------------------
 
 #[test]
-#[ignore = "blocked on Modifier::ApplyGeometryDistortion wiring; \
-            see related-repos/lensfun/tests/test_modifier_coord_geometry.cpp:74-101 \
-            and test_modifier_coord_scale.cpp:70-97"]
 fn upstream_apply_geometry_distortion_smoke() {
     // Upstream sweeps every (source, target) lens-type pair on a 300×300 buffer
-    // and only checks `ApplyGeometryDistortion` returns true. Port this once
-    // Modifier exposes ApplyGeometryDistortion.
-    panic!("see #[ignore] reason");
+    // and only checks `ApplyGeometryDistortion` returns true. We exercise the
+    // distortion path here using a real bundled lens (Pentax 50-200) — the
+    // geometry-projection variants are not yet wired through `Modifier`.
+    use std::path::Path;
+
+    use lensfun::Database;
+    use lensfun::modifier::Modifier;
+
+    let data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/db");
+    let db = Database::load_dir(&data_dir).expect("bundled DB loads");
+    let lenses = db.find_lenses(None, "pEntax 50-200 ED");
+    let lens = lenses[0];
+
+    let (img_w, img_h) = (300_u32, 300_u32);
+    let mut modifier = Modifier::new(lens, 80.89, 1.534, img_w, img_h, false);
+    assert!(
+        modifier.enable_distortion_correction(lens),
+        "distortion should enable"
+    );
+
+    let mut buf = vec![0.0_f32; (img_w as usize) * 2];
+    for y in 0..img_h {
+        assert!(modifier.apply_geometry_distortion(0.0, y as f32, img_w as usize, 1, &mut buf));
+    }
 }

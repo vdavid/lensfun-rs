@@ -212,13 +212,26 @@ proptest! {
 // -----------------------------// High-level API (blocked) //-----------------------------//
 
 /// Direct port of `test_mod_subpix` (test_modifier_subpix.cpp:74-85): build a
-/// 300×300 modifier, call `ApplySubpixelDistortion` row-by-row, assert each
-/// returns true. Blocked until `Modifier::apply_subpixel_distortion` exists.
+/// 300×300 modifier, call `apply_subpixel_distortion` row-by-row, assert each
+/// returns true.
 #[test]
-#[ignore = "blocked on Modifier::apply_subpixel_distortion wiring"]
 fn upstream_smoke_test_apply_subpixel_distortion() {
-    // When wired:
-    //   let lens = Lens::new_rectilinear_with_tca(...);
-    //   let modifier = Modifier::for_lens(&lens, 24.0, 1.0, 300, 300, false);
-    //   for y in 0..300 { assert!(modifier.apply_subpixel_distortion(0.0, y, 300, 1, &mut buf)); }
+    use std::path::Path;
+
+    use lensfun::Database;
+    use lensfun::modifier::Modifier;
+
+    let data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/db");
+    let db = Database::load_dir(&data_dir).expect("bundled DB loads");
+    let lenses = db.find_lenses(None, "Olympus ED 14-42mm");
+    let lens = lenses[0];
+
+    let (img_w, img_h) = (300_u32, 300_u32);
+    let mut modifier = Modifier::new(lens, 17.89, 2.0, img_w, img_h, false);
+    assert!(modifier.enable_tca_correction(lens), "TCA should enable");
+
+    let mut buf = vec![0.0_f32; (img_w as usize) * 6];
+    for y in 0..img_h {
+        assert!(modifier.apply_subpixel_distortion(0.0, y as f32, img_w as usize, 1, &mut buf));
+    }
 }

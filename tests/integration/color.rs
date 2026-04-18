@@ -195,18 +195,68 @@ fn u8_saturates_at_top() {
 // -------------------------- modifier-blocked ---------------------------//
 
 #[test]
-#[ignore = "blocked on Modifier wiring (test_modifier_color.cpp full fixture, multi-format)"]
 fn modifier_apply_color_modification_does_not_crash_for_every_format() {
-    // Port of `test_modifier_color.cpp::test_mod_color<T>` — needs `lfModifier::ApplyColor
-    // Modification` so it can drive forward/reverse for every (format, pixel desc, alignment)
-    // tuple. Re-enable once `Modifier` exposes a color-pass entry point.
+    // Port of `test_modifier_color.cpp::test_mod_color<T>`. The upstream sweep
+    // covers every (format, pixel desc, alignment) tuple; we cover the three
+    // pixel formats we expose (`u8`, `u16`, `f32`) and the typical channel
+    // counts. Just an "apply doesn't crash and returns true" smoke.
+    use std::path::Path;
+
+    use lensfun::Database;
+    use lensfun::modifier::Modifier;
+
+    let data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/db");
+    let db = Database::load_dir(&data_dir).expect("bundled DB loads");
+    let lenses = db.find_lenses(None, "Olympus ED 14-42mm");
+    let lens = lenses[0];
+
+    let (w, h) = (32_usize, 16_usize);
+    for &reverse in &[false, true] {
+        let mut m = Modifier::new(lens, 17.89, 2.0, w as u32, h as u32, reverse);
+        assert!(m.enable_vignetting_correction(lens, 5.0, 1000.0));
+
+        for &channels in &[1_usize, 3, 4] {
+            let mut buf_u8 = vec![128_u8; w * h * channels];
+            assert!(m.apply_color_modification_u8(&mut buf_u8, 0.0, 0.0, w, h, channels));
+
+            let mut buf_u16 = vec![32000_u16; w * h * channels];
+            assert!(m.apply_color_modification_u16(&mut buf_u16, 0.0, 0.0, w, h, channels));
+
+            let mut buf_f32 = vec![0.5_f32; w * h * channels];
+            assert!(m.apply_color_modification_f32(&mut buf_f32, 0.0, 0.0, w, h, channels));
+        }
+    }
 }
 
 #[test]
-#[ignore = "blocked on Modifier wiring (test_modifier_regression.cpp::test_verify_vignetting_pa)"]
 fn verify_vignetting_pa_olympus_zuiko() {
     // Port of `test_verify_vignetting_pa` — uses bundled-DB lookup
     // (`Olympus Zuiko Digital ED 14-42mm f/3.5-5.6`), `RealFocal`-aware coefficient
-    // rescaling, and `Modifier::apply_color_modification`. Reproduces upstream's exact
-    // u16 expected values (22406, 22406, 24156, 28803).
+    // rescaling, and `Modifier::apply_color_modification_u16`. Reproduces upstream's exact
+    // u16 expected values (22406, 22406, 24156, 28803). NB: upstream re-uses the same
+    // 3-pixel buffer across all four samples without reset (test_modifier_regression.cpp:169).
+    use std::path::Path;
+
+    use lensfun::Database;
+    use lensfun::modifier::Modifier;
+
+    let data_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/db");
+    let db = Database::load_dir(&data_dir).expect("bundled DB loads");
+    let lenses = db.find_lenses(None, "Olympus ED 14-42mm");
+    let lens = lenses[0];
+
+    let mut m = Modifier::new(lens, 17.89, 2.0, 1500, 1000, false);
+    assert!(m.enable_vignetting_correction(lens, 5.0, 1000.0));
+
+    let xs = [0.0_f32, 751.0, 810.0, 1270.0];
+    let ys = [0.0_f32, 497.0, 937.0, 100.0];
+    let expected: [u16; 4] = [22406, 22406, 24156, 28803];
+
+    let mut buf = [16000_u16, 16000, 16000];
+    for i in 0..xs.len() {
+        assert!(m.apply_color_modification_u16(&mut buf, xs[i], ys[i], 1, 1, 3));
+        for (ch, &v) in buf.iter().enumerate() {
+            assert_eq!(v, expected[i], "ch{ch} sample {i}");
+        }
+    }
 }

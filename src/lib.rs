@@ -9,12 +9,13 @@
 //! # Quick start (sketched — not all wired yet)
 //!
 //! ```ignore
-//! use lensfun::Database;
+//! use lensfun::{Database, Modifier};
 //!
 //! let db = Database::load_dir("/usr/share/lensfun/")?;
-//! let lens = db.find_lens("Canon EF 24-70mm f/2.8L II USM", "Canon EOS R5")?;
-//! let modifier = lens.modifier_for(35.0, 4.0, 5.0);
-//! modifier.apply_distortion(&mut pixel_buf, width, height);
+//! let lens = db.find_lenses(None, "Canon EF 24-70mm f/2.8L II USM")[0];
+//! let mut modifier = Modifier::new(lens, 35.0, 1.0, width, height, false);
+//! modifier.enable_distortion_correction(lens);
+//! modifier.apply_geometry_distortion(0.0, 0.0, width as usize, height as usize, &mut coords);
 //! # Ok::<(), lensfun::Error>(())
 //! ```
 //!
