@@ -1,0 +1,70 @@
+lensfun-rs
+==========
+
+Pure-Rust port of LensFun, the camera lens correction library.
+
+Code license: GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later).
+See LICENSE-LGPL-3.0 (and LICENSE-GPL-3.0, which the LGPL incorporates by reference).
+
+
+Upstream
+--------
+
+This crate is a derivative work of LensFun (https://github.com/lensfun/lensfun)
+and inherits its license. The upstream C++ code, the database schema, and the
+test suite that serves as our executable spec are the work of the LensFun
+contributors:
+
+  Copyright (C) 2007-2024 Andrew Zabolotny <zap@homelink.ru>
+  Copyright (C) 2014      Roman Lebedev (SSE2 paths — not currently ported)
+  Copyright (C) 2010      Klaus Post (database, calibration data)
+  And many other contributors — see the upstream `git log` for the full list.
+
+The Rust port is by:
+
+  Copyright (C) 2026      David Veszelovszki <veszelovszki@gmail.com>
+
+
+Bundled lens database
+---------------------
+
+The XML files under `data/db/` are the upstream LensFun lens calibration
+database, distributed under the **Creative Commons Attribution-ShareAlike 3.0
+Unported** license (CC-BY-SA 3.0):
+
+  https://creativecommons.org/licenses/by-sa/3.0/
+
+The database is the collective work of the LensFun community. Modifications to
+the bundled `*.xml` files must be published under the same license. The Rust
+port itself does not modify the database — it only reads it.
+
+
+Third-party Rust crates
+-----------------------
+
+This crate depends on the following third-party Rust crates. Their licenses are
+in the `cargo deny` allow list (see `deny.toml`) and verified by CI:
+
+  flate2          MIT OR Apache-2.0
+  regex           MIT OR Apache-2.0
+  roxmltree       MIT OR Apache-2.0
+  thiserror       MIT OR Apache-2.0
+
+Dev-only:
+
+  approx          Apache-2.0
+  proptest        MIT OR Apache-2.0
+
+
+Excluded upstream code
+----------------------
+
+The following upstream files are **not** ported and **not** linked into this
+crate. They live under different licenses and would taint the LGPL crate:
+
+  apps/                — GPL-3.0 (lenstool CLI etc.)
+  libs/lensfun/mod-coord-sse.cpp        — SSE; deferred to a future v1.x port
+  libs/lensfun/mod-color-sse*.cpp       — SSE; deferred to a future v1.x port
+
+The SSE files are LGPL just like the rest, but they're skipped for v1 per the
+project spec (scalar Rust first; SIMD via `std::simd` or `wide` later).

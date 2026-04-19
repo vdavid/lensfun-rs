@@ -37,8 +37,9 @@ modifier.apply_distortion(&mut pixel_buf, width, height);
 
 ## License
 
-- **Code:** LGPL-3.0-or-later (derivative of upstream LensFun).
+- **Code:** LGPL-3.0-or-later (derivative of upstream LensFun). See [`LICENSE-LGPL-3.0`](LICENSE-LGPL-3.0) and [`LICENSE-GPL-3.0`](LICENSE-GPL-3.0) (which the LGPL incorporates by reference).
 - **Bundled XML database:** CC-BY-SA 3.0 from upstream LensFun contributors.
+- See [`NOTICE`](NOTICE) for full attribution.
 
 ## Acknowledgements
 
