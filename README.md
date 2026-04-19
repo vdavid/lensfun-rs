@@ -51,9 +51,9 @@ The lens calibration database is bundled (~574 KB gzipped, ~5 MB after decompres
 
 ## Status
 
-Pre-alpha. The math is bit-equivalent to the upstream C++ reference. The public API is small and stable-ish but not yet locked. v0.1 - v0.6 are functionally complete; v1.0 needs license + crates.io polish + cross-platform CI runs.
+Beta. 1,640 A/B test cases pass against upstream LensFun C++ within 4.88 × 10⁻⁴ pixels — about 2,000× under the upstream regression tolerance. The kernel APIs and `Modifier` surface are stable; minor refinements may land before 1.0.
 
-See [`docs/notes/lensfun-rs.md`](docs/notes/lensfun-rs.md) for the porting plan and [`docs/notes/handoff-2026-04-18.md`](docs/notes/handoff-2026-04-18.md) for the latest checkpoint.
+See [`CHANGELOG.md`](CHANGELOG.md) for the release history and [`docs/notes/lensfun-rs.md`](docs/notes/lensfun-rs.md) for the porting plan.
 
 ## License
 

@@ -1,6 +1,6 @@
 [package]
 name = "lensfun"
-version = "0.1.0-alpha.1"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 license = "LGPL-3.0-or-later"
@@ -8,7 +8,7 @@ description = "Pure-Rust port of LensFun: camera lens correction (distortion, TC
 repository = "https://github.com/vdavid/lensfun-rs"
 homepage = "https://github.com/vdavid/lensfun-rs"
 keywords = ["lens", "camera", "distortion", "vignetting", "photography"]
-categories = ["multimedia::images", "graphics"]
+categories = ["multimedia::images", "graphics", "multimedia"]
 readme = "README.md"
 documentation = "https://docs.rs/lensfun"
 exclude = [
