@@ -130,16 +130,29 @@ Three things to read from this:
 2. **The combined full-stack rate (~52 M px/s in Rust)** corresponds to ~385 ms for a 20 MP image when all three corrections are enabled. That's the budget to plan against if you're doing distortion + TCA + vignetting end-to-end on the CPU on Apple Silicon, scalar.
 3. **Both sides are scalar here.** Upstream lensfun ships SSE-accelerated kernels (`mod-coord-sse.cpp`, `mod-color-sse*.cpp`) that activate on x86-64 builds with `BUILD_FOR_SSE2=ON`. The probe here is built on Apple Silicon, where those flags are off, so this comparison is scalar-vs-scalar. On a Linux/x86 box with the SSE flags enabled, upstream will pull ahead on distortion and TCA — closing that gap is the SIMD-kernel work deferred to a post-1.0 milestone.
 
-### Ground-truth datapoint
+### Why Prvw measures ~239 M px/s while this bench reports ~52
 
-Prvw (an image viewer that uses `lensfun-rs`) reports **83 ms for the full lens-correction stage on a 20.4 MP Sony ARW** (5456 × 3632 = 19.8 M pixels) — that's an apparent ~239 M pixels/s combined.
+The Prvw image viewer reports **83 ms for the full lens-correction stage on a 20.4 MP Sony ARW** (5456 × 3632 = 19.8 M pixels) — an apparent ~239 M pixels/s combined, ~4.6× higher than the ~52 M px/s combined this bench reports.
 
-That number does **not** reconcile with the 52 M px/s combined we measure here, even allowing for normal hardware variance. Two plausible reasons for the gap, which we haven't fully run down yet:
+The gap is **rayon**. Prvw's `apply_distortion_resample` (and its TCA twin) parallelize per row:
 
-- Prvw may not be running all three corrections on every pixel — some lenses lack TCA calibration (the bench's Pentax-DA lens does), some pipelines run vignetting on a downsampled buffer, etc. We measured "all three corrections, every pixel."
-- Prvw's measurement may include only the kernel time, not the buffer allocation/initialization that the bench includes (especially the 96 MB `vec![1.0; w*h]` for vignetting).
+```rust
+rgb.par_chunks_exact_mut(w * 3)
+    .enumerate()
+    .for_each(|(y, out_row)| {
+        let mut coords = vec![0.0_f32; w * 2];
+        modifier.apply_geometry_distortion(0.0, y as f32, w, 1, &mut coords);
+        resample_distortion_row(&src, w, h, &coords, out_row);
+    });
+```
 
-Cite the Prvw number with that caveat. The bench number (~52 M px/s combined, ~385 ms for 20 MP) is the conservative figure from a controlled measurement. The Prvw number is faster under conditions we haven't fully isolated. Until we have, plan against the bench.
+On Apple Silicon's ~10 P-cores, that's a ~4-5× speedup over the bench's single-threaded measurement. The math works out.
+
+**Is parallelism a Rust-port advantage?** No. Upstream `lfModifier` has no internal thread state, no mutex, no static buffers — `Apply*` methods only read the modifier and write to caller-provided buffers. Upstream even ships OpenMP test variants (`test_modifier_coord_distortion_parallel.cpp`), explicit proof it's intended to be parallelized at the call site. A `lensfun-sys` consumer in C can do the same with `#pragma omp parallel for` or pthread; per-thread modifier instances also work. The bench's single-threaded apples-to-apples numbers remain the kernel-vs-kernel comparison.
+
+The (small) ergonomic angle: in Rust, `par_chunks_exact_mut` is one trait import. In C/C++, OpenMP needs build-system buy-in. Lower friction matters in practice, but it's not a throughput claim.
+
+**Bottom line**: the bench numbers above are the right basis for capacity planning. If you parallelize at the call site (recommended for image-sized work), expect roughly N× speedup on N cores until memory bandwidth catches you.
 
 ### Single-pixel call overhead (diagnostic only)
 
