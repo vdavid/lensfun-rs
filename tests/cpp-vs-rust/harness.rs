@@ -637,13 +637,29 @@ const BENCH_VIG_FOCAL: f32 = 16.0; // use 16mm with aperture 5.0 (known calibrat
 const BENCH_VIG_APERTURE_AT16: f32 = 5.0;
 const BENCH_VIG_DISTANCE: f32 = 1000.0;
 
+// Single-pixel diagnostic iters
 const DIST_ITERS: u64 = 1_000_000;
 const TCA_ITERS: u64 = 1_000_000;
 const VIG_ITERS: u64 = 100_000;
 
+// Row-batched (production-shape) iters
+//   distortion / TCA: 200 iters × 6000 pixels = 1.2 M pixels per side, ~10-20 ms
+//   vignetting: 5 iters × 24 M pixels = 120 M pixels, ~250-500 ms
+const ROW_DIST_ITERS: u64 = 200;
+const ROW_TCA_ITERS: u64 = 200;
+const ROW_VIG_ITERS: u64 = 5;
+
 struct BenchResult {
     rust_ns: u64,
     cpp_ns: u64,
+}
+
+/// Row-batched bench result. Carries pixel counts so callers can compute throughput.
+struct RowBenchResult {
+    rust_ns: u64,
+    rust_pixels: u64,
+    cpp_ns: u64,
+    cpp_pixels: u64,
 }
 
 fn bench_distortion(probe: &mut Probe) -> BenchResult {
@@ -823,10 +839,256 @@ fn bench_vignetting(probe: &mut Probe) -> BenchResult {
     BenchResult { rust_ns, cpp_ns }
 }
 
+// ---------------------------------------------------------------------------
+// Row-batched bench (production-shape: one apply_* call per row)
+// ---------------------------------------------------------------------------
+
+fn bench_row_distortion(probe: &mut Probe) -> RowBenchResult {
+    let lens = find_lens_rust(BENCH_MAKER, BENCH_MODEL).expect("bench lens not found");
+    let m = Modifier::new(
+        lens,
+        BENCH_FOCAL,
+        BENCH_CROP,
+        BENCH_WIDTH,
+        BENCH_HEIGHT,
+        true,
+    );
+    let mut m = m;
+    assert!(
+        m.enable_distortion_correction(lens),
+        "bench_row: distortion correction did not enable"
+    );
+
+    let width = BENCH_WIDTH as usize;
+    let y = (BENCH_HEIGHT / 2) as f32;
+    let mut coords = vec![0.0_f32; width * 2];
+
+    // Warmup
+    for _ in 0..10 {
+        m.apply_geometry_distortion(0.0, std::hint::black_box(y), width, 1, &mut coords);
+        std::hint::black_box(coords.as_ptr());
+    }
+
+    // Timed
+    let t0 = std::time::Instant::now();
+    for _ in 0..ROW_DIST_ITERS {
+        m.apply_geometry_distortion(0.0, std::hint::black_box(y), width, 1, &mut coords);
+        std::hint::black_box(coords.as_ptr());
+    }
+    let rust_ns = t0.elapsed().as_nanos() as u64;
+    let rust_pixels = ROW_DIST_ITERS * BENCH_WIDTH as u64;
+
+    // C++ via probe
+    let cmd = format!(
+        "bench_row\tdistortion\t\"{BENCH_MAKER}\"\t\"{BENCH_MODEL}\"\t{BENCH_FOCAL:.9}\t{BENCH_CROP:.9}\t{BENCH_WIDTH}\t{BENCH_HEIGHT}\t1\t{ROW_DIST_ITERS}"
+    );
+    let resp = probe.send(&cmd);
+    let mut it = resp.split('\t');
+    let cpp_ns: u64 = it
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .expect("bench_row distortion: bad probe ns");
+    let cpp_pixels: u64 = it
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .expect("bench_row distortion: bad probe pixels");
+
+    RowBenchResult {
+        rust_ns,
+        rust_pixels,
+        cpp_ns,
+        cpp_pixels,
+    }
+}
+
+fn bench_row_tca(probe: &mut Probe) -> RowBenchResult {
+    let lens = find_lens_rust(BENCH_MAKER, BENCH_MODEL).expect("bench lens not found");
+    let mut m = Modifier::new(
+        lens,
+        BENCH_FOCAL,
+        BENCH_CROP,
+        BENCH_WIDTH,
+        BENCH_HEIGHT,
+        true,
+    );
+    assert!(
+        m.enable_tca_correction(lens),
+        "bench_row: TCA correction did not enable"
+    );
+
+    let width = BENCH_WIDTH as usize;
+    let y = (BENCH_HEIGHT / 2) as f32;
+    let mut coords = vec![0.0_f32; width * 6];
+
+    for _ in 0..10 {
+        m.apply_subpixel_distortion(0.0, std::hint::black_box(y), width, 1, &mut coords);
+        std::hint::black_box(coords.as_ptr());
+    }
+
+    let t0 = std::time::Instant::now();
+    for _ in 0..ROW_TCA_ITERS {
+        m.apply_subpixel_distortion(0.0, std::hint::black_box(y), width, 1, &mut coords);
+        std::hint::black_box(coords.as_ptr());
+    }
+    let rust_ns = t0.elapsed().as_nanos() as u64;
+    let rust_pixels = ROW_TCA_ITERS * BENCH_WIDTH as u64;
+
+    let cmd = format!(
+        "bench_row\ttca\t\"{BENCH_MAKER}\"\t\"{BENCH_MODEL}\"\t{BENCH_FOCAL:.9}\t{BENCH_CROP:.9}\t{BENCH_WIDTH}\t{BENCH_HEIGHT}\t1\t{ROW_TCA_ITERS}"
+    );
+    let resp = probe.send(&cmd);
+    let mut it = resp.split('\t');
+    let cpp_ns: u64 = it
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .expect("bench_row tca: bad probe ns");
+    let cpp_pixels: u64 = it
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .expect("bench_row tca: bad probe pixels");
+
+    RowBenchResult {
+        rust_ns,
+        rust_pixels,
+        cpp_ns,
+        cpp_pixels,
+    }
+}
+
+fn bench_row_vignetting(probe: &mut Probe) -> RowBenchResult {
+    let lens = find_lens_rust(BENCH_MAKER, BENCH_MODEL).expect("bench lens not found");
+    let mut m = Modifier::new(
+        lens,
+        BENCH_VIG_FOCAL,
+        BENCH_CROP,
+        BENCH_WIDTH,
+        BENCH_HEIGHT,
+        false,
+    );
+    assert!(
+        m.enable_vignetting_correction(lens, BENCH_VIG_APERTURE_AT16, BENCH_VIG_DISTANCE),
+        "bench_row: vignetting correction did not enable"
+    );
+
+    let width = BENCH_WIDTH as usize;
+    let height = BENCH_HEIGHT as usize;
+    // Single-channel f32 buffer covering the whole image (~96 MB).
+    let mut pixels = vec![1.0_f32; width * height];
+
+    // Warmup once
+    m.apply_color_modification_f32(&mut pixels, 0.0, 0.0, width, height, 1);
+    std::hint::black_box(pixels.as_ptr());
+    // Reset so each timed iteration starts from 1.0.
+    pixels.fill(1.0);
+
+    let t0 = std::time::Instant::now();
+    for _ in 0..ROW_VIG_ITERS {
+        m.apply_color_modification_f32(&mut pixels, 0.0, 0.0, width, height, 1);
+        std::hint::black_box(pixels.as_ptr());
+    }
+    let rust_ns = t0.elapsed().as_nanos() as u64;
+    let rust_pixels = ROW_VIG_ITERS * BENCH_WIDTH as u64 * BENCH_HEIGHT as u64;
+
+    let cmd = format!(
+        "bench_row\tvignetting\t\"{BENCH_MAKER}\"\t\"{BENCH_MODEL}\"\t{BENCH_VIG_FOCAL:.9}\t{BENCH_VIG_APERTURE_AT16:.9}\t{BENCH_VIG_DISTANCE:.9}\t{BENCH_CROP:.9}\t{BENCH_WIDTH}\t{BENCH_HEIGHT}\t{ROW_VIG_ITERS}"
+    );
+    let resp = probe.send(&cmd);
+    let mut it = resp.split('\t');
+    let cpp_ns: u64 = it
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .expect("bench_row vignetting: bad probe ns");
+    let cpp_pixels: u64 = it
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .expect("bench_row vignetting: bad probe pixels");
+
+    RowBenchResult {
+        rust_ns,
+        rust_pixels,
+        cpp_ns,
+        cpp_pixels,
+    }
+}
+
+fn fmt_mpx(ns: u64, pixels: u64) -> String {
+    let mpx = pixels as f64 / (ns as f64 / 1_000.0); // M pixels per second
+    format!("{:>6.1} M px/s", mpx)
+}
+
+fn print_row_bench_results(dist: &RowBenchResult, tca: &RowBenchResult, vig: &RowBenchResult) {
+    fn ratio_label_pxps(rust_ns: u64, rust_px: u64, cpp_ns: u64, cpp_px: u64) -> String {
+        // Compute pixels-per-ns on both sides and ratio in float to avoid
+        // integer-division precision loss (kernels run at ~10 px/ns, so ns/px
+        // truncates to 0).
+        let rust_rate = rust_px as f64 / rust_ns as f64;
+        let cpp_rate = cpp_px as f64 / cpp_ns as f64;
+        let ratio = rust_rate / cpp_rate;
+        if ratio >= 1.0 {
+            format!("{:.2}× rust faster", ratio)
+        } else {
+            format!("{:.2}× rust slower", 1.0 / ratio)
+        }
+    }
+    println!("── row-batched throughput (production-shape: per-row apply_* calls) ──");
+    println!("{:<14} {:<18} {:<18} ratio", "", "rust", "c++");
+    for (label, r) in [("distortion", dist), ("tca", tca), ("vignetting", vig)] {
+        println!(
+            "{:<14} {:<18} {:<18} {}",
+            label,
+            fmt_mpx(r.rust_ns, r.rust_pixels),
+            fmt_mpx(r.cpp_ns, r.cpp_pixels),
+            ratio_label_pxps(r.rust_ns, r.rust_pixels, r.cpp_ns, r.cpp_pixels),
+        );
+    }
+    // Combined-stack pixel rate = 1 / (sum of reciprocal rates).
+    fn combined_mpxs(r1: f64, r2: f64, r3: f64) -> f64 {
+        1.0 / (1.0 / r1 + 1.0 / r2 + 1.0 / r3)
+    }
+    let rust_d = dist.rust_pixels as f64 / (dist.rust_ns as f64 / 1_000.0);
+    let rust_t = tca.rust_pixels as f64 / (tca.rust_ns as f64 / 1_000.0);
+    let rust_v = vig.rust_pixels as f64 / (vig.rust_ns as f64 / 1_000.0);
+    let cpp_d = dist.cpp_pixels as f64 / (dist.cpp_ns as f64 / 1_000.0);
+    let cpp_t = tca.cpp_pixels as f64 / (tca.cpp_ns as f64 / 1_000.0);
+    let cpp_v = vig.cpp_pixels as f64 / (vig.cpp_ns as f64 / 1_000.0);
+
+    let rust_combined = combined_mpxs(rust_d, rust_t, rust_v);
+    let cpp_combined = combined_mpxs(cpp_d, cpp_t, cpp_v);
+    let mp20: f64 = 20.0;
+
+    println!();
+    println!("Combined full-stack (1 / sum of reciprocals):");
+    println!(
+        "  rust:   {:>6.1} M px/s   →  20 MP image: {:>5.0} ms",
+        rust_combined,
+        mp20 * 1000.0 / rust_combined,
+    );
+    println!(
+        "  c++:    {:>6.1} M px/s   →  20 MP image: {:>5.0} ms",
+        cpp_combined,
+        mp20 * 1000.0 / cpp_combined,
+    );
+    println!();
+    println!(
+        "Ground truth (Prvw measured): 83 ms full lens stage on 5456×3632 (19.8 MP) = 239 M px/s"
+    );
+    println!();
+    println!(
+        "iterations (per side): distortion={ROW_DIST_ITERS} rows × {BENCH_WIDTH} px, tca={ROW_TCA_ITERS} rows × {BENCH_WIDTH} px,"
+    );
+    println!(
+        "                       vignetting={ROW_VIG_ITERS} × {BENCH_WIDTH}×{BENCH_HEIGHT} buffer"
+    );
+    println!("lens: {BENCH_MAKER} {BENCH_MODEL}");
+    println!(
+        "  distortion/tca: focal={BENCH_FOCAL}mm  vignetting: focal={BENCH_VIG_FOCAL}mm f/{BENCH_VIG_APERTURE_AT16}"
+    );
+}
+
 fn print_bench_results(dist: &BenchResult, tca: &BenchResult, vig: &BenchResult) {
     fn fmt_mops(iters: u64, ns: u64) -> String {
         let mops = iters as f64 / (ns as f64 / 1_000.0);
-        format!("{:.1} M ops/s", mops)
+        format!("{:>5.1} M call/s", mops)
     }
 
     fn ratio_label(rust_ns: u64, cpp_ns: u64) -> String {
@@ -850,26 +1112,26 @@ fn print_bench_results(dist: &BenchResult, tca: &BenchResult, vig: &BenchResult)
     let vig_cpp = fmt_mops(VIG_ITERS, vig.cpp_ns);
     let vig_ratio = ratio_label(vig.rust_ns, vig.cpp_ns);
 
-    println!("── throughput (single-pixel kernel call) ──");
-    println!("{:<18} {:<16} {:<16} ratio", "", "rust", "c++");
+    println!("── single-pixel call overhead (diagnostic — does NOT reflect production) ──");
+    println!("{:<14} {:<18} {:<18} ratio", "", "rust", "c++");
     println!(
-        "{:<18} {:<16} {:<16} {}",
+        "{:<14} {:<18} {:<18} {}",
         "distortion", dist_rust, dist_cpp, dist_ratio
     );
     println!(
-        "{:<18} {:<16} {:<16} {}",
+        "{:<14} {:<18} {:<18} {}",
         "tca", tca_rust, tca_cpp, tca_ratio
     );
     println!(
-        "{:<18} {:<16} {:<16} {}",
+        "{:<14} {:<18} {:<18} {}",
         "vignetting", vig_rust, vig_cpp, vig_ratio
     );
     println!();
+    println!("Each \"call\" = one apply_*(x, y, 1, 1, ...) invocation. Real workloads call");
+    println!("once per row (~{BENCH_WIDTH} pixels per call), amortizing overhead. Use the");
+    println!("row-batched numbers above for production capacity planning.");
+    println!();
     println!("iterations: distortion={DIST_ITERS}, tca={TCA_ITERS}, vignetting={VIG_ITERS}");
-    println!("lens: {BENCH_MAKER} {BENCH_MODEL}");
-    println!(
-        "  distortion/tca: focal={BENCH_FOCAL}mm  vignetting: focal={BENCH_VIG_FOCAL}mm f/{BENCH_VIG_APERTURE_AT16}"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -889,13 +1151,21 @@ fn main() {
 
     if bench_mode {
         println!("Running throughput benchmark...");
-        println!("(warmup + timed loops — this takes a few seconds)");
+        println!("(warmup + timed loops — this takes ~10 seconds)");
         println!();
 
+        // Lead with the realistic measurement.
+        let row_dist = bench_row_distortion(&mut probe);
+        let row_tca = bench_row_tca(&mut probe);
+        let row_vig = bench_row_vignetting(&mut probe);
+        print_row_bench_results(&row_dist, &row_tca, &row_vig);
+
+        println!();
+
+        // Single-pixel diagnostic (kept for context; framed as overhead measurement).
         let dist = bench_distortion(&mut probe);
         let tca = bench_tca(&mut probe);
         let vig = bench_vignetting(&mut probe);
-
         print_bench_results(&dist, &tca, &vig);
         return;
     }

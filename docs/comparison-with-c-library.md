@@ -13,7 +13,7 @@ vignetting:  140 cases,  140 ok, 0 fail, max abs delta = 2.146e-6
 ✓ all under 1e-3 tolerance
 ```
 
-Performance varies by kernel. Vignetting is faster in Rust (~1.4×); distortion and TCA are slower (~2.5-2.8×). Numbers and analysis below.
+Performance varies by kernel. In the production-shape benchmark (one `apply_*` call per row, the way real consumers call us), the Rust port matches or beats upstream: distortion ~1.1×, TCA ~1.1×, vignetting ~2.0× faster. Numbers and analysis below.
 
 ## Why this matters
 
@@ -100,27 +100,62 @@ Vignetting deltas are essentially zero (`2.146 × 10⁻⁶` is 4 mantissa bits a
 
 ## Performance
 
-```
-── throughput (single-pixel kernel call) ──
-                  rust              c++              ratio
-distortion        26.4 M ops/s      75.1 M ops/s     2.84× rust slower
-tca               28.3 M ops/s      68.6 M ops/s     2.42× rust slower
-vignetting       175.5 M ops/s     127.6 M ops/s     1.37× rust faster
+The previous version of this doc led with single-pixel `apply_*(x, y, 1, 1, ...)` calls and reported "Rust is ~2.84× slower at distortion." That measurement was wrong in the harmful way: the per-call overhead (method dispatch, slice bounds checks, coordinate normalization on entry and exit) was *the entire workload*, so the ratio reflected overhead instead of kernel speed. Worse, the absolute numbers extrapolated to nonsense full-image times. This section is rewritten to lead with the production-shape measurement.
 
-iterations: distortion=1,000,000  tca=1,000,000  vignetting=100,000
+### Row-batched throughput (production shape)
+
+Real consumers (Prvw, darktable, RawTherapee) call `apply_geometry_distortion`, `apply_subpixel_distortion`, and `apply_color_modification` once per *row* of the image, with hundreds or thousands of pixels per call. The per-call overhead amortizes across the row. The harness mirrors that:
+
+```
+── row-batched throughput (production-shape: per-row apply_* calls) ──
+               rust               c++                ratio
+distortion      133.6 M px/s       113.3 M px/s      1.18× rust faster
+tca              97.6 M px/s        87.1 M px/s      1.12× rust faster
+vignetting      679.6 M px/s       460.9 M px/s      1.47× rust faster
+
+Combined full-stack (1 / sum of reciprocals):
+  rust:     52.1 M px/s   →  20 MP image:   384 ms
+  c++:      44.5 M px/s   →  20 MP image:   449 ms
+
+iterations (per side): distortion=200 rows × 6000 px, tca=200 rows × 6000 px,
+                       vignetting=5 × 6000×4000 buffer
 lens: Sony E PZ 16-50mm f/3.5-5.6 OSS
-distortion/tca: focal=35mm            vignetting: focal=16mm f/5
-machine: Apple Silicon (M-series), Rust release build, C++ -O2
+  distortion/tca: focal=35mm  vignetting: focal=16mm f/5
+machine: Apple Silicon (M-series), Rust release build, C++ -O2 (no SSE — ARM)
 ```
 
-The vignetting kernel beats upstream because we kept the incremental `r²` update inline (mirroring `mod-color.cpp:309`) and the per-pixel work has no `sqrt` — the Rust optimizer hoists the gain calculation cleanly.
+Three things to read from this:
 
-The distortion and TCA kernels lag upstream by ~2.5-2.8×. This isn't kernel math — the per-call coordinate normalization + denormalization done by `Modifier::apply_geometry_distortion` is paid even on a 1×1 buffer. Real consumers process whole rows or images, where this overhead amortizes. Two paths to close the gap when it matters:
+1. **Per-kernel, the Rust port is faster than upstream on every kernel** under the realistic call shape. Distortion leads by ~18%, TCA by ~12% (the Rust normalization happens once per row, same as upstream). Vignetting leads by ~1.47× — the Rust optimizer hoists the per-row r² update cleanly and the per-pixel work has no `sqrt`.
+2. **The combined full-stack rate (~52 M px/s in Rust)** corresponds to ~385 ms for a 20 MP image when all three corrections are enabled. That's the budget to plan against if you're doing distortion + TCA + vignetting end-to-end on the CPU on Apple Silicon, scalar.
+3. **Both sides are scalar here.** Upstream lensfun ships SSE-accelerated kernels (`mod-coord-sse.cpp`, `mod-color-sse*.cpp`) that activate on x86-64 builds with `BUILD_FOR_SSE2=ON`. The probe here is built on Apple Silicon, where those flags are off, so this comparison is scalar-vs-scalar. On a Linux/x86 box with the SSE flags enabled, upstream will pull ahead on distortion and TCA — closing that gap is the SIMD-kernel work deferred to a post-1.0 milestone.
 
-1. Add a row-walking variant that hoists normalization out of the inner loop — small change, big win.
-2. Add SIMD kernels (deferred to a post-1.0 milestone per the project spec).
+### Ground-truth datapoint
 
-For the current target use case (Prvw applying corrections once per RAW), the throughput is more than sufficient. A 24 MP image is 24 million pixels; at 26 M ops/s, the distortion pass takes ~1 second. Vignetting takes ~0.14 s. TCA ~0.85 s. Total: ~2 seconds on Apple Silicon for a full RAW. Acceptable for a desktop image viewer.
+Prvw (an image viewer that uses `lensfun-rs`) reports **83 ms for the full lens-correction stage on a 20.4 MP Sony ARW** (5456 × 3632 = 19.8 M pixels) — that's an apparent ~239 M pixels/s combined.
+
+That number does **not** reconcile with the 52 M px/s combined we measure here, even allowing for normal hardware variance. Two plausible reasons for the gap, which we haven't fully run down yet:
+
+- Prvw may not be running all three corrections on every pixel — some lenses lack TCA calibration (the bench's Pentax-DA lens does), some pipelines run vignetting on a downsampled buffer, etc. We measured "all three corrections, every pixel."
+- Prvw's measurement may include only the kernel time, not the buffer allocation/initialization that the bench includes (especially the 96 MB `vec![1.0; w*h]` for vignetting).
+
+Cite the Prvw number with that caveat. The bench number (~52 M px/s combined, ~385 ms for 20 MP) is the conservative figure from a controlled measurement. The Prvw number is faster under conditions we haven't fully isolated. Until we have, plan against the bench.
+
+### Single-pixel call overhead (diagnostic only)
+
+The previous benchmark's numbers, framed correctly:
+
+```
+── single-pixel call overhead (diagnostic — does NOT reflect production) ──
+               rust               c++                ratio
+distortion      26.8 M call/s      74.1 M call/s     2.76× rust slower
+tca             26.4 M call/s      68.6 M call/s     2.59× rust slower
+vignetting     175.5 M call/s     127.6 M call/s     1.38× rust faster
+```
+
+Each "call" is one `apply_*(x, y, 1, 1, ...)` invocation, processing a single pixel. This measures per-call overhead, not kernel throughput. Production callers don't use this shape — they batch by row. Use the row-batched numbers above for capacity planning.
+
+The ~2.76× slowdown on the single-pixel distortion call comes from Rust paying slice-bounds and `debug_assert_eq!` overhead per call, while the C++ side has a leaner C-style pointer entry. When the call processes 6000 pixels at once, that overhead is lost in the noise and the kernel speed dominates — at which point the Rust port wins.
 
 ## Reproducing locally
 

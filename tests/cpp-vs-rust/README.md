@@ -58,13 +58,23 @@ printf 'distortion\t"Sony"\t"E PZ 16-50mm f/3.5-5.6 OSS"\t35\t1.5\t6000\t4000\t1
 
 ## Throughput benchmark
 
-Pass `--bench` to measure single-pixel kernel throughput (calls/sec) for each correction kind on both Rust and C++, with results printed as a summary table. The modifier is built once outside the timed loop; only the per-pixel kernel call is timed.
+Pass `--bench` to run two benchmarks back-to-back:
+
+1. **Row-batched throughput (lead measurement, production-shape)** — calls `apply_*` once per row of `width` pixels, mirroring how Prvw, darktable, and other consumers actually invoke the API. Reports M pixels/s per kernel and a combined full-stack rate (1 / sum of reciprocals) plus the implied ms-for-20-MP-image budget. **This is the number to use for capacity planning.**
+
+2. **Single-pixel call overhead (diagnostic)** — calls `apply_*(x, y, 1, 1, ...)` per pixel. Pays per-call overhead (slice bounds checks, coordinate normalization) on every pixel, so it measures call overhead, not kernel throughput. Useful for spotting overhead regressions in either side. **Do not use for capacity planning — production code never calls this shape.**
+
+Both modifiers are built once outside the timed loops, with a warmup pass before timing. Hoisting is prevented via `std::hint::black_box` (Rust) and `asm volatile("" : : "r"(...) : "memory")` (C++).
 
 ```bash
 cargo run --release --example ab_compare -- --bench
 # Or via just:
 just --justfile tests/cpp-vs-rust/justfile bench
 ```
+
+### Why two modes
+
+The previous single-mode bench reported "Rust is 2.84× slower at distortion" — true for the per-call overhead path, but misleading as a real-world performance claim because production callers process whole rows, not individual pixels. The row-batched mode reflects production reality: under per-row calls the Rust port is actually faster than upstream on every kernel.
 
 ## Running the A/B harness
 

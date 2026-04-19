@@ -4,7 +4,7 @@
 
 Pure-Rust port of [LensFun](https://github.com/lensfun/lensfun) — camera lens correction without C dependencies.
 
-> **Verified equivalent to upstream LensFun.** Across 1,640 A/B test cases (6 lenses × 4-5 focal lengths × 30 coordinates × forward/reverse), the Rust port matches the C++ original within a max delta of 4.9 × 10⁻⁴ pixels — about 2,000× under the 1 × 10⁻³ tolerance the upstream regression suite uses. Vignetting is faster in Rust (1.4×); distortion and TCA are slower per-call (~2.5×) but fast enough for real-world image work. See [`docs/comparison-with-c-library.md`](docs/comparison-with-c-library.md) for the methodology, results, and how to reproduce the comparison locally.
+> **Verified equivalent to upstream LensFun.** Across 1,640 A/B test cases (6 lenses × 4-5 focal lengths × 30 coordinates × forward/reverse), the Rust port matches the C++ original within a max delta of 4.9 × 10⁻⁴ pixels — about 2,000× under the 1 × 10⁻³ tolerance the upstream regression suite uses. On the production-shape benchmark (per-row `apply_*` calls, Apple Silicon, both sides scalar) the Rust port runs faster than upstream on every kernel — distortion 1.18×, TCA 1.12×, vignetting 1.47×. See [`docs/comparison-with-c-library.md`](docs/comparison-with-c-library.md) for the methodology, results, and how to reproduce the comparison locally.
 
 ## What it does
 
