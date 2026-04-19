@@ -197,8 +197,8 @@ fn verify_subpix_linear_olympus_zuiko() {
     for i in 0..xs.len() {
         let mut coords = [0.0_f32; 6];
         assert!(m.apply_subpixel_distortion(xs[i], ys[i], 1, 1, &mut coords));
-        for j in 0..6 {
-            assert_abs_diff_eq!(coords[j], expected[i][j], epsilon = TOL);
+        for (j, &c) in coords.iter().enumerate() {
+            assert_abs_diff_eq!(c, expected[i][j], epsilon = TOL);
         }
     }
 }
@@ -255,8 +255,8 @@ fn verify_subpix_poly3_olympus_zuiko() {
     for i in 0..xs.len() {
         let mut coords = [0.0_f32; 6];
         assert!(m.apply_subpixel_distortion(xs[i], ys[i], 1, 1, &mut coords));
-        for j in 0..6 {
-            assert_abs_diff_eq!(coords[j], expected[i][j], epsilon = TOL);
+        for (j, &c) in coords.iter().enumerate() {
+            assert_abs_diff_eq!(c, expected[i][j], epsilon = TOL);
         }
     }
 }
