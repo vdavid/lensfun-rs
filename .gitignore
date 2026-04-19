@@ -10,5 +10,8 @@ Cargo.lock.bak
 # Local-only repos cloned for reference (lensfun upstream, etc.)
 related-repos/
 
+# Locally-built A/B-comparison probe (built by tests/cpp-vs-rust/build.sh)
+tests/cpp-vs-rust/probe
+
 # Local handoff scratch
 .claude/
