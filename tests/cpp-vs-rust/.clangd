@@ -1,0 +1,18 @@
+# clangd config for the cpp-vs-rust probe.
+#
+# These match the flags in `build.sh`. The actual build still uses build.sh —
+# this file just teaches the IDE where to find headers so the editor stops
+# flagging false-positive "file not found" / "unknown type name" errors.
+#
+# If you upgrade glib via Homebrew, the version-pinned paths below need a refresh
+# (or run `pkg-config glib-2.0 --cflags` and update them).
+
+CompileFlags:
+  Add:
+    - -std=c++11
+    - -I/Users/veszelovszki/projects-git/vdavid/lensfun-rs/related-repos/lensfun/build
+    - -I/Users/veszelovszki/projects-git/vdavid/lensfun-rs/related-repos/lensfun/build/libs/lensfun
+    - -I/opt/homebrew/Cellar/glib/2.88.0/include/glib-2.0
+    - -I/opt/homebrew/Cellar/glib/2.88.0/lib/glib-2.0/include
+    - -I/opt/homebrew/opt/gettext/include
+    - -I/opt/homebrew/Cellar/pcre2/10.47_1/include

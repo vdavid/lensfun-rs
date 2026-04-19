@@ -1,0 +1,15 @@
+# Recipes for the A/B comparison harness.
+# Run from the repo root: just --justfile tests/cpp-vs-rust/justfile <recipe>
+# Or: cd tests/cpp-vs-rust && just <recipe>
+
+# Rebuild the C++ probe binary.
+probe:
+    bash tests/cpp-vs-rust/build.sh
+
+# Run the Rust harness against the probe.
+compare:
+    cargo run --example ab_compare --release
+
+# Run throughput benchmark: prints Rust vs C++ ops/s per kernel kind.
+bench:
+    cargo run --release --example ab_compare -- --bench

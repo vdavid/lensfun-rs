@@ -23,6 +23,7 @@ exclude = [
     "proptest-regressions/",
     "related-repos/",
     "scripts/",
+    "tests/cpp-vs-rust/",
 ]
 
 [package.metadata.docs.rs]
@@ -45,6 +46,10 @@ flate2 = "1"
 # Compress data/db/*.xml at build time. Runtime only needs the matching
 # `flate2` in [dependencies] for decompression.
 flate2 = "1"
+
+[[example]]
+name = "ab_compare"
+path = "tests/cpp-vs-rust/harness.rs"
 
 [dev-dependencies]
 proptest = "1"
